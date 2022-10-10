@@ -28,7 +28,7 @@ def get_default_date(tgl_awal, tgl_akhir):
     return tgl_awal, tgl_akhir
 
 
-@pengeluaran_bp.route('/tren_pengeluaran')
+@pengeluaran_bp.route('/pengeluaran/tren_pengeluaran')
 def tren_pengeluaran():
     tgl_awal = request.args.get('tgl_awal')
     tahun = datetime.now().year if tgl_awal == None else int(tgl_awal[:4])
@@ -81,7 +81,7 @@ def tren_pengeluaran():
     return jsonify(data)
 
 
-@pengeluaran_bp.route('/pengeluaran_instalasi')
+@pengeluaran_bp.route('/pengeluaran/pengeluaran_instalasi')
 def pengeluaran_instalasi():
     tgl_awal = request.args.get('tgl_awal')
     tgl_akhir = request.args.get('tgl_akhir')
@@ -119,7 +119,7 @@ def pengeluaran_instalasi():
     return jsonify(result)
 
 
-@pengeluaran_bp.route('/pengeluaran_rekanan')
+@pengeluaran_bp.route('/pengeluaran/pengeluaran_rekanan')
 def pengeluaran_rekanan():
     tgl_awal = request.args.get('tgl_awal')
     tahun = datetime.now().year if tgl_awal == None else int(tgl_awal[:4])
@@ -156,12 +156,12 @@ def pengeluaran_rekanan():
     return jsonify(data)
 
 
-@pengeluaran_bp.route('/pengeluaran_produk')
+@pengeluaran_bp.route('/pengeluaran/pengeluaran_produk')
 def pengeluaran_produk():
     return jsonify({'response': 'ini data pengeluaran produk'})
 
 
-@pengeluaran_bp.route('/pengeluaran_cara_bayar')
+@pengeluaran_bp.route('/pengeluaran/pengeluaran_cara_bayar')
 def pengeluaran_cara_bayar():
     tgl_awal = request.args.get('tgl_awal')
     tgl_akhir = request.args.get('tgl_akhir')
