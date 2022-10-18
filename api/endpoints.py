@@ -3,10 +3,10 @@ from datetime import datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
 from flask import Blueprint, jsonify, request
-from sqlalchemy import text
 
 from api.config import MONTH_ID as month_id
 from api.config import get_connection
+from api.query import *
 
 
 pengeluaran_bp = Blueprint('pengeluaran', __name__)
@@ -15,105 +15,130 @@ engine = get_connection()
 
 def get_default_date(tgl_awal, tgl_akhir):
     if tgl_awal == None:
-        tgl_awal = datetime.today() - relativedelta(months=1)
-        tgl_awal = datetime.strptime(tgl_awal.strftime('%Y-%m-%d'), '%Y-%m-%d')
+        tgl_awal = datetime.strptime((datetime.today() - relativedelta(months=1)).strftime('%Y-%m-%d'), '%Y-%m-%d')
     else:
         tgl_awal = datetime.strptime(tgl_awal, '%Y-%m-%d')
 
     if tgl_akhir == None:
-        tgl_akhir = datetime.strptime(
-            datetime.today().strftime('%Y-%m-%d'), '%Y-%m-%d')
+        tgl_akhir = datetime.strptime(datetime.today().strftime('%Y-%m-%d'), '%Y-%m-%d')
     else:
         tgl_akhir = datetime.strptime(tgl_akhir, '%Y-%m-%d')
     return tgl_awal, tgl_akhir
 
 
+def get_date_prev(tgl_awal, tgl_akhir):
+    tgl_awal = tgl_awal - relativedelta(months=1)
+    tgl_awal = tgl_awal.strftime('%Y-%m-%d')
+    tgl_akhir = tgl_akhir - relativedelta(months=1)
+    tgl_akhir = tgl_akhir.strftime('%Y-%m-%d')
+    return tgl_awal, tgl_akhir
+
+
+def count_values(data, param):
+    cnt = Counter()
+    for i in range(len(data)):
+        cnt[data[i][param]] += float(data[i]['total'])
+    return cnt
+
+
 @pengeluaran_bp.route('/pengeluaran/tren_pengeluaran')
 def tren_pengeluaran():
+    # Date Initialization
     tgl_awal = request.args.get('tgl_awal')
     tahun = datetime.now().year if tgl_awal == None else int(tgl_awal[:4])
-    result = engine.execute(
-        text(
-            f"""SELECT sbkk.TglBKK, sbkk.JmlBayar
-            FROM rsudtasikmalaya.dbo.StrukBuktiKasKeluar sbkk
-            WHERE datepart(year,[TglBKK]) = {tahun-1}
-            OR datepart(year,[TglBKK]) = {tahun}
-            ORDER BY sbkk.TglBKK ASC;"""))
 
-    tren = {}
+    # Get query result
+    result = query_tren_pengeluaran(tahun)
+
+    # Initialization Trend Data
+    tren = []
     for i in range(1, 13):
-        tren[month_id[i]] = {
+        tren.append({
+            "month": month_id[i],
             "tahun_ini": 0,
             "tahun_sebelumnya": 0,
             "tahun_selanjutnya": 0,
             "persentase_tren": None,
             "persentase_predict": None
-        }
+        })
 
+    # Extract data outcome
     for row in result:
         curr_m = month_id[row['TglBKK'].month]
-        if row['TglBKK'].year == tahun:
-            tren[curr_m]['tahun_ini'] = round(
-                tren[curr_m]['tahun_ini'] + float(row['JmlBayar']), 2)
-        else:
-            tren[curr_m]['tahun_sebelumnya'] = round(
-                tren[curr_m]['tahun_sebelumnya'] + float(row['JmlBayar']), 2)
-        tren[curr_m]['tahun_selanjutnya'] = round(
-            tren[curr_m]['tahun_selanjutnya'] + float(0), 2)
+        for i in range(len(tren)):
+            if row['TglBKK'].year == tahun and tren[i]['month'] == curr_m:
+                tren[i]['tahun_ini'] = round(
+                    tren[i]['tahun_ini'] + float(row['JmlBayar']), 2)
+            else:
+                if tren[i]['month'] == curr_m:
+                    tren[i]['tahun_sebelumnya'] = round(
+                        tren[i]['tahun_sebelumnya'] + float(row['JmlBayar']), 2)
 
-    for i in range(1, 13):
-        if tren[month_id[i]]['tahun_ini'] == 0 or tren[month_id[i]]['tahun_sebelumnya'] == 0:
-            tren[month_id[i]]['persentase_tren'] = None
+            tren[i]['tahun_sebelumnya'] = round(
+                    tren[i]['tahun_sebelumnya'] + float(0), 2)
+
+    # Define trend percentage
+    for i in range(len(tren)):
+        if tren[i]['tahun_ini'] == 0 or tren[i]['tahun_sebelumnya'] == 0:
+            tren[i]['persentase_tren'] = None
         else:
-            tren[month_id[i]]['persentase_tren'] = round(((tren[month_id[i]]['tahun_ini'] - tren[month_id[i]]['tahun_sebelumnya'])
-                                                          / tren[month_id[i]]['tahun_sebelumnya']) * 100, 2)
-        if tren[month_id[i]]['tahun_ini'] == 0 or tren[month_id[i]]['tahun_selanjutnya'] == 0:
-            tren[month_id[i]]['persentase_predict'] = None
+            tren[i]['persentase_tren'] = round(((tren[i]['tahun_ini'] - tren[i]['tahun_sebelumnya'])
+                                                / tren[i]['tahun_sebelumnya']) * 100, 2)
+        if tren[i]['tahun_ini'] == 0 or tren[i]['tahun_selanjutnya'] == 0:
+            tren[i]['persentase_predict'] = None
         else:
-            tren[month_id[i]]['persentase_predict'] = round(((tren[month_id[i]]['tahun_ini'] - tren[month_id[i]]['tahun_selanjutnya'])
-                                                             / tren[month_id[i]]['tahun_selanjutnya']) * 100, 2)
+            tren[i]['persentase_predict'] = round(((tren[i]['tahun_ini'] - tren[i]['tahun_selanjutnya'])
+                                                / tren[i]['tahun_selanjutnya']) * 100, 2)
+
+    # Define return result as a json
     data = {
         "judul": "Tren Pengeluaran",
         "label": 'Pengeluaran',
         "tahun": tahun,
-        "tren": tren
+        "data": tren
     }
     return jsonify(data)
 
 
 @pengeluaran_bp.route('/pengeluaran/pengeluaran_instalasi')
 def pengeluaran_instalasi():
+    # Date Initialization
     tgl_awal = request.args.get('tgl_awal')
     tgl_akhir = request.args.get('tgl_akhir')
     tgl_awal, tgl_akhir = get_default_date(tgl_awal, tgl_akhir)
-    result = engine.execute(
-        text(
-            f"""SELECT sbkk.TglBKK, i.NamaInstalasi, sbkk.JmlBayar
-           FROM rsudtasikmalaya.dbo.StrukBuktiKasKeluar sbkk
-           INNER JOIN rsudtasikmalaya.dbo.Ruangan r
-           ON sbkk.KdRuangan = r.KdRuangan
-           INNER JOIN rsudtasikmalaya.dbo.Instalasi i
-           ON r.KdInstalasi = i.KdInstalasi
-           WHERE sbkk.TglBKK >= '{tgl_awal}'
-           AND sbkk.TglBKK < '{tgl_akhir + timedelta(days=1)}'
-           ORDER BY sbkk.TglBKK ASC;"""))
-    data = []
-    for row in result:
-        data.append({
-            "tanggal": row['TglBKK'],
-            "instalasi": row['NamaInstalasi'],
-            "total": row['JmlBayar'],
-            "judul": 'Pengeluaran Instalasi',
-            "label": 'Pengeluaran'
-        })
-    cnt = Counter()
-    for i in range(len(data)):
-        cnt[data[i]['instalasi'].lower().replace(' ', '_')] += float(data[i]['total'])
+    tgl_awal_prev, tgl_akhir_prev = get_date_prev(tgl_awal, tgl_akhir)
 
+    # Get query result
+    result = query_pengeluaran_instalasi(tgl_awal, tgl_akhir + timedelta(days=1))
+    result_prev = query_pengeluaran_instalasi(tgl_awal_prev, datetime.strptime(tgl_akhir_prev, '%Y-%m-%d') + timedelta(days=1))
+
+    # Extract data by date (dict)
+    tmp = [{"tanggal": row['TglBKK'], "instalasi": row['NamaInstalasi'], "total": row['JmlBayar']} for row in result]
+    tmp_prev = [{"tanggal": row['TglBKK'], "instalasi": row['NamaInstalasi'], "total": row['JmlBayar']} for row in result_prev]
+
+    # Extract data as (dataframe)
+    cnts = count_values(tmp, 'instalasi')
+    cnts_prev = count_values(tmp_prev, 'instalasi')
+    data = [{"name": x, "value": round(y, 2)} for x, y in cnts.items()]
+    data_prev = [{"name": x, "value": round(y, 2)} for x, y in cnts_prev.items()]
+
+    # Define trend percentage
+    for i in range(len(cnts)):
+        percentage = None
+        for j in range(len(cnts_prev)):
+            if data[i]["name"] == data_prev[j]["name"]:
+                percentage = (data[i]["value"] - data_prev[j]["value"]) / data[i]["value"]
+            try:
+                data[i]["trend"] = round(percentage, 3)
+            except:
+                data[i]["trend"] = percentage
+        data[i]["predict"] = None
+
+    # Define return result as a json
     result = {
         "judul": 'Pengeluaran Instalasi',
         "label": 'Pengeluaran',
-        "instalasi": cnt,
+        "data": data,
         "tgl_filter": {"tgl_awal": tgl_awal, "tgl_akhir": tgl_akhir}
     }
     return jsonify(result)
@@ -121,37 +146,70 @@ def pengeluaran_instalasi():
 
 @pengeluaran_bp.route('/pengeluaran/pengeluaran_rekanan')
 def pengeluaran_rekanan():
+    # Date Initialization
     tgl_awal = request.args.get('tgl_awal')
     tahun = datetime.now().year if tgl_awal == None else int(tgl_awal[:4])
-    result = engine.execute(
-        text(
-            f"""SELECT spp.TglStruk, spp.IdPenjamin, p.NamaPenjamin, 
-            spp.TotalBiaya as Pengajuan, JmlHutangPenjamin as Klaim
-            FROM rsudtasikmalaya.dbo.StrukPelayananPasien spp
-            INNER JOIN rsudtasikmalaya.dbo.Penjamin p
-            ON spp.IdPenjamin = p.IdPenjamin
-            WHERE spp.IdPenjamin != 2222222222
-            AND datepart(year,[TglStruk]) = {tahun-1}
-            OR datepart(year,[TglStruk]) = {tahun}
-            ORDER BY spp.TglStruk ASC;"""))
 
-    tren = {}
+    # Get query result
+    result = query_pengeluaran_rekanan(tahun)
+
+    # Initialization Trend Data
+    tren = []
     for i in range(1, 13):
-        tren[month_id[i]] = {
-            "pengajuan": 0,
+        tren.append({
+            "month": month_id[i],
             "klaim": 0,
-        }
+            "pengajuan": 0,
+            "klaim_prev": 0,
+            "pengajuan_prev": 0,
+            "klaim_next": 0,
+            "pengajuan_next": 0,
+            "klaim_tren": None,
+            "klaim_predict": None,
+            # "pengajuan_tren": None,
+            # "pengajuan_predict": None
+        })
 
+    # Extract data
     for row in result:
         curr_m = month_id[row['TglStruk'].month]
-        tren[curr_m]['pengajuan'] = round(tren[curr_m]['pengajuan'] + float(row['Pengajuan']), 2)
-        tren[curr_m]['klaim'] = round(tren[curr_m]['klaim'] + float(row['Klaim']), 2)
-        
+        for i in range(len(tren)):
+            if row['TglStruk'].year == tahun and tren[i]['month'] == curr_m:
+                tren[i]['pengajuan'] = round(
+                    tren[i]['pengajuan'] + float(row['Pengajuan']), 2)
+                tren[i]['klaim'] = round(
+                    tren[i]['klaim'] + float(row['Klaim']), 2)
+            else:
+                if tren[i]['month'] == curr_m:
+                    tren[i]['pengajuan_prev'] = round(
+                        tren[i]['pengajuan_prev'] + float(row['Pengajuan']), 2)
+                    tren[i]['klaim_prev'] = round(
+                        tren[i]['klaim_prev'] + float(row['Klaim']), 2)
+
+            tren[i]['pengajuan_next'] = round(
+                tren[i]['pengajuan_next'] + float(0), 2)
+            tren[i]['klaim_next'] = round(
+                tren[i]['klaim_next'] + float(0), 2)
+
+    # Define trend percentage
+    for i in range(len(tren)):
+        if tren[i]['klaim'] == 0 or tren[i]['klaim_prev'] == 0:
+            tren[i]['klaim_tren'] = None
+        else:
+            tren[i]['klaim_tren'] = round(((tren[i]['klaim'] - tren[i]['klaim_prev'])
+                                                / tren[i]['klaim_prev']) * 100, 2)
+        if tren[i]['klaim'] == 0 or tren[i]['klaim_next'] == 0:
+            tren[i]['klaim_predict'] = None
+        else:
+            tren[i]['klaim_predict'] = round(((tren[i]['klaim'] - tren[i]['klaim_next'])
+                                                / tren[i]['klaim_next']) * 100, 2)    
+    
+    # Define return result as a json
     data = {
         "judul": "Pengeluaran Rekanan",
         "label": 'Pengeluaran',
         "tahun": tahun,
-        "asuransi": tren
+        "data": tren
     }
     return jsonify(data)
 
@@ -163,36 +221,43 @@ def pengeluaran_produk():
 
 @pengeluaran_bp.route('/pengeluaran/pengeluaran_cara_bayar')
 def pengeluaran_cara_bayar():
+    # Date Initialization
     tgl_awal = request.args.get('tgl_awal')
     tgl_akhir = request.args.get('tgl_akhir')
     tgl_awal, tgl_akhir = get_default_date(tgl_awal, tgl_akhir)
-    result = engine.execute(
-        text(
-            f"""SELECT sbkk.TglBKK, cb.CaraBayar, sbkk.JmlBayar
-            FROM dbo.StrukBuktiKasKeluar sbkk
-            INNER JOIN dbo.CaraBayar cb
-            ON sbkk.KdCaraBayar = cb.KdCaraBayar
-            WHERE sbkk.TglBKK >= '{tgl_awal}'
-            AND sbkk.TglBKK < '{tgl_akhir + timedelta(days=1)}'
-            ORDER BY sbkk.TglBKK ASC;"""))
-    data = []
-    for row in result:
-        data.append({
-            "tanggal": row['TglBKK'],
-            "cara_bayar": row['CaraBayar'],
-            "total": row['JmlBayar'],
-            "judul": 'Pendapatan Cara Bayar',
-            "label": 'Pendapatan'
-        })
-    cnt = Counter()
-    for i in range(len(data)):
-        cnt[data[i]['cara_bayar'].lower().replace(
-            ' ', '_')] += float(data[i]['total'])
+    tgl_awal_prev, tgl_akhir_prev = get_date_prev(tgl_awal, tgl_akhir)
 
+    # Get query result
+    result = query_pengeluaran_cara_bayar(tgl_awal, tgl_akhir + timedelta(days=1))
+    result_prev = query_pengeluaran_cara_bayar(tgl_awal_prev, datetime.strptime(tgl_akhir_prev, '%Y-%m-%d') + timedelta(days=1))
+
+    # Extract data by date (dict)
+    tmp = [{"tanggal": row['TglBKK'], "cara_bayar": row['CaraBayar'], "total": row['JmlBayar']} for row in result]
+    tmp_prev = [{"tanggal": row['TglBKK'], "cara_bayar": row['CaraBayar'], "total": row['JmlBayar']} for row in result_prev]
+
+    # Extract data as (dataframe)
+    cnts = count_values(tmp, 'cara_bayar')
+    cnts_prev = count_values(tmp_prev, 'cara_bayar')
+    data = [{"name": x, "value": round(y, 2)} for x, y in cnts.items()]
+    data_prev = [{"name": x, "value": round(y, 2)} for x, y in cnts_prev.items()]
+
+    # Define trend percentage
+    for i in range(len(cnts)):
+        percentage = None
+        for j in range(len(cnts_prev)):
+            if data[i]["name"] == data_prev[j]["name"]:
+                percentage = (data[i]["value"] - data_prev[j]["value"]) / data[i]["value"]
+            try:
+                data[i]["trend"] = round(percentage, 3)
+            except:
+                data[i]["trend"] = percentage
+        data[i]["predict"] = None
+
+    # Define return result as a json
     result = {
         "judul": 'Pengeluaran Cara Bayar',
         "label": 'Pengeluaran',
-        "cara_bayar": cnt,
+        "data": data,
         "tgl_filter": {"tgl_awal": tgl_awal, "tgl_akhir": tgl_akhir}
     }
     return jsonify(result)
